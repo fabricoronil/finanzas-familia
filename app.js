@@ -204,7 +204,7 @@ function deniedScreen() {
   return `<div class="gate card">
     ${LOGO(64)}
     <h1>Todavía no tenés acceso</h1>
-    <p>La cuenta <b>${esc(store.user?.email)}</b> no está en la lista de la familia. Pedile a Fabricio que la agregue y volvé a entrar.</p>
+    <p>La cuenta <b>${esc(store.user?.email)}</b> todavía no está en la lista de la familia. Pedile a Fabricio que la agregue en <b>Ajustes → Quiénes pueden entrar</b> y volvé a abrir la app.</p>
     <button class="btn btn-secondary" data-action="sign-out">Entrar con otra cuenta</button>
   </div>`;
 }
@@ -543,6 +543,8 @@ function viewAjustes() {
     </form>
   </div>
 
+  ${store.mode === 'cloud' ? membersSection() : ''}
+
   ${sectionHead('Cuenta')}
   <div class="card pad">
     ${store.mode === 'cloud'
@@ -566,6 +568,24 @@ function viewAjustes() {
   <div class="card pad">
     <p class="small"><b>iPhone:</b> abrila en Safari, tocá Compartir <span aria-hidden="true">⬆︎</span> y elegí <b>Agregar a inicio</b>.</p>
     <p class="small"><b>Android:</b> abrila en Chrome, tocá el menú ⋮ y elegí <b>Agregar a la pantalla principal</b>.</p>
+  </div>`;
+}
+
+function membersSection() {
+  const members = store.settings.miembros || [];
+  const owner = store.isOwner();
+  return `${sectionHead('Quiénes pueden entrar')}
+  <div class="card pad">
+    <p class="muted small">${owner
+      ? 'Agregá el email de Google de cada persona. Cuando entren a la app con esa cuenta, ven y cargan los mismos datos.'
+      : 'Estas cuentas pueden ver y cargar los datos. Solo Fabricio puede cambiar la lista.'}</p>
+    ${members.length ? `<div class="people">${members.map((m, i) => `<span class="person">${esc(m)}${owner
+      ? `<button data-action="remove-member" data-index="${i}" aria-label="Quitar a ${esc(m)}">${icon('x', 14)}</button>` : ''}</span>`).join('')}</div>`
+      : '<p class="small">Todavía no agregaste a nadie.</p>'}
+    ${owner ? `<form class="inline-form" data-form="add-member">
+      <input name="email" type="email" placeholder="email@gmail.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="btn btn-secondary" type="submit">Agregar</button>
+    </form>` : ''}
   </div>`;
 }
 
@@ -771,6 +791,11 @@ const ACTIONS = {
     people.splice(Number(el.dataset.index), 1);
     store.saveSettings({ people }).catch(fail);
   },
+  'remove-member'(el) {
+    const miembros = [...(store.settings.miembros || [])];
+    miembros.splice(Number(el.dataset.index), 1);
+    store.saveSettings({ miembros }).catch(fail);
+  },
   export() {
     const data = { app: 'finanzas-familia', version: 1, exported: new Date().toISOString(), settings: store.settings, items: store.items };
     const a = document.createElement('a');
@@ -812,6 +837,14 @@ document.addEventListener('submit', (e) => {
     const people = store.settings.people || [];
     if (!people.includes(name)) store.saveSettings({ people: [...people, name] }).catch(fail);
     form.reset();
+  }
+  if (form.dataset.form === 'add-member') {
+    const email = form.elements.email.value.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('Ese email no parece válido.', 'bad');
+    const miembros = store.settings.miembros || [];
+    if (!miembros.includes(email)) store.saveSettings({ miembros: [...miembros, email] }).catch(fail);
+    form.reset();
+    toast(`Listo: ${email} ya puede entrar`);
   }
 });
 

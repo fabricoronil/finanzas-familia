@@ -1,21 +1,34 @@
 rules_version = '2';
 
-// Solo las cuentas de Google de esta lista pueden ver y cargar datos.
-// Para sumar a alguien: agregá su email (en minúsculas) y volvé a publicar las reglas.
+// El dueño (coronilfabri@gmail.com) siempre puede entrar y es el único que
+// cambia la lista de "miembros" (desde Ajustes en la app). Los miembros ven y
+// cargan todos los datos de la casa. Nadie más puede leer ni escribir nada.
 service cloud.firestore {
   match /databases/{database}/documents {
-    function esDeLaFamilia() {
-      return request.auth != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in [
-          'tu-email@gmail.com',
-          'email-de-papa@gmail.com',
-          'email-de-mama@gmail.com'
-        ];
+    function email() {
+      return request.auth.token.email.lower();
+    }
+    function conSesion() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function esDueno() {
+      return conSesion() && email() == 'coronilfabri@gmail.com';
+    }
+    function esMiembro() {
+      let hogar = /databases/$(database)/documents/hogar/principal;
+      return esDueno()
+        || (conSesion() && exists(hogar) && email() in get(hogar).data.get('miembros', []));
     }
 
-    match /hogar/{documento=**} {
-      allow read, write: if esDeLaFamilia();
+    match /hogar/principal {
+      allow read: if esMiembro();
+      allow create: if esDueno();
+      allow update: if esDueno()
+        || (esMiembro() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['miembros']));
+    }
+
+    match /hogar/principal/items/{item} {
+      allow read, write: if esMiembro();
     }
   }
 }

@@ -1,5 +1,5 @@
 // Capa de datos: guarda en Firebase (compartido) o en el dispositivo (modo prueba).
-import { firebaseConfig } from './config.js';
+import { firebaseConfig, ownerEmail } from './config.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const LOCAL_KEY = 'finanzas-familia:v1';
@@ -34,6 +34,9 @@ export const store = {
   saveSettings: (patch) => backend.saveSettings(patch),
   signIn: () => backend.signIn?.(),
   signOut: () => backend.signOut?.(),
+  isOwner() {
+    return this.mode === 'cloud' && (this.user?.email || '').toLowerCase() === ownerEmail.toLowerCase();
+  },
 };
 
 function set(patch) {
