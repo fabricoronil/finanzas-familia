@@ -276,6 +276,25 @@ h1, h2, p { margin: 0; }
 .check.on { background: var(--good-fill); border-color: var(--good-fill); color: #fff; }
 .check.on .i { stroke-width: 2.8; }
 
+.approx { color: var(--label-2); font-weight: 500; }
+.load-btn {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+.list.missing { box-shadow: var(--shadow), 0 0 0 1.5px var(--warn-soft); }
+.hero-note {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--sep);
+  font-size: 13px;
+  color: var(--warn);
+}
 .hint { margin: 8px 4px 0; font-size: 13px; color: var(--label-2); }
 
 /* ---------- Resumen ---------- */

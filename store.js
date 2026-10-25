@@ -50,6 +50,10 @@ export const store = {
   // Marca un gasto fijo o la cuota de una deuda como pagada (o no) en un mes.
   // En las deudas, pagar descuenta la cuota del saldo; desmarcar la devuelve.
   setPaid: (item, month, paid) => backend.setPaid(item, month, paid),
+  // Monto real de un gasto fijo que cambia cada mes. Con `paid` también lo
+  // marca como pagado; con `estimate` pasa a ser el aproximado de los meses
+  // que todavía no tienen dato.
+  setMonthAmount: (item, month, value, opts = {}) => backend.setMonthAmount(item, month, value, opts),
   saveSettings: (patch) => backend.saveSettings(patch),
   removeAccess: (email) => backend.removeAccess(email),
   newInvite: () => backend.newInvite(),
@@ -113,6 +117,13 @@ function localBackend() {
       } else {
         delete it.paid[m];
       }
+      save();
+    },
+    async setMonthAmount(item, m, value, { paid, estimate }) {
+      const it = db.items[item.id];
+      (it.amounts ||= {})[m] = value;
+      if (paid) (it.paid ||= {})[m] = true;
+      if (estimate) it.amount = value;
       save();
     },
     async saveSettings(patch) { Object.assign(db.settings, patch); save(); },
@@ -201,6 +212,12 @@ async function cloudBackend() {
         return F.updateDoc(ref(item.id), path, F.deleteField(), 'saldo', F.increment(prev));
       }
       return F.updateDoc(ref(item.id), path, paid ? true : F.deleteField());
+    },
+    setMonthAmount(item, m, value, { paid, estimate }) {
+      const extra = [];
+      if (paid) extra.push(new F.FieldPath('paid', m), true);
+      if (estimate) extra.push('amount', value);
+      return F.updateDoc(ref(item.id), new F.FieldPath('amounts', m), value, ...extra);
     },
     saveSettings: (patch) => F.setDoc(home, patch, { merge: true }),
     removeAccess: (email) => F.deleteDoc(F.doc(accesosCol, email)),

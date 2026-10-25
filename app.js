@@ -58,18 +58,18 @@ const KINDS = {
 };
 // Atajos para cargar gastos fijos con un toque (completan nombre y categoría).
 const FIXED_SUGGESTIONS = [
-  { name: 'Luz', cat: 'servicios', emoji: '💡' },
-  { name: 'Gas', cat: 'servicios', emoji: '🔥' },
-  { name: 'Agua', cat: 'servicios', emoji: '🚰' },
-  { name: 'Internet', cat: 'servicios', emoji: '📶' },
-  { name: 'Celulares', cat: 'servicios', emoji: '📱' },
-  { name: 'Facultad (Cuenca del Plata)', cat: 'educacion', emoji: '🎓', person: 'Fabri' },
-  { name: 'Colegio del Carmen', cat: 'educacion', emoji: '🏫', person: 'Nico' },
-  { name: 'Alquiler', cat: 'vivienda', emoji: '🏠' },
-  { name: 'Expensas', cat: 'vivienda', emoji: '🏢' },
-  { name: 'Obra social', cat: 'salud', emoji: '🩺' },
-  { name: 'Seguro del auto', cat: 'transporte', emoji: '🚗' },
-  { name: 'Impuestos (ABL, patente)', cat: 'impuestos', emoji: '🧾' },
+  { name: 'Luz', cat: 'servicios', emoji: '💡', variable: true },
+  { name: 'Gas', cat: 'servicios', emoji: '🔥', variable: true },
+  { name: 'Agua', cat: 'servicios', emoji: '🚰', variable: true },
+  { name: 'Internet', cat: 'servicios', emoji: '📶', variable: false },
+  { name: 'Celulares', cat: 'servicios', emoji: '📱', variable: true },
+  { name: 'Facultad (Cuenca del Plata)', cat: 'educacion', emoji: '🎓', person: 'Fabri', variable: true },
+  { name: 'Colegio del Carmen', cat: 'educacion', emoji: '🏫', person: 'Nico', variable: true },
+  { name: 'Alquiler', cat: 'vivienda', emoji: '🏠', variable: false },
+  { name: 'Expensas', cat: 'vivienda', emoji: '🏢', variable: true },
+  { name: 'Obra social', cat: 'salud', emoji: '🩺', variable: true },
+  { name: 'Seguro del auto', cat: 'transporte', emoji: '🚗', variable: true },
+  { name: 'Impuestos (ABL, patente)', cat: 'impuestos', emoji: '🧾', variable: true },
 ];
 
 const VIEW_KIND = { ingresos: 'income', fijos: 'fixed', gastos: 'expense', deudas: 'debt' };
@@ -114,6 +114,10 @@ function dayLabel(iso) {
 // ---------- Cálculos ----------
 
 const isPaid = (item, m) => item.paid?.[m] != null;
+// Gasto fijo: el monto real del mes si ya lo cargaron, si no el aproximado.
+const fixedAmount = (f, m) => f.amounts?.[m] ?? f.amount ?? 0;
+// Falta el dato si cambia cada mes, no se cargó y el mes ya empezó.
+const missingAmount = (f, m) => !!f.variable && f.amounts?.[m] == null && m <= thisMonth();
 const debtCuota = (d, m) => (isPaid(d, m) ? d.paid[m] : Math.min(d.cuota || 0, d.saldo || 0));
 
 function calc(m) {
@@ -131,22 +135,24 @@ function calc(m) {
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || 0) - (a.created || 0));
 
   const totIn = sum(incomes, (i) => i.amount);
-  const totFixed = sum(fixed, (i) => i.amount);
+  const totFixed = sum(fixed, (f) => fixedAmount(f, m));
   const totDebt = sum(debts, (d) => debtCuota(d, m));
   const totExp = sum(expenses, (i) => i.amount);
   const committed = totFixed + totDebt;
 
   const pending = [
-    ...fixed.filter((f) => !isPaid(f, m)).map((item) => ({ item, amount: item.amount })),
+    ...fixed.filter((f) => !isPaid(f, m)).map((item) => ({ item, amount: fixedAmount(item, m) })),
     ...debts.filter((d) => !isPaid(d, m) && debtCuota(d, m) > 0).map((item) => ({ item, amount: debtCuota(item, m) })),
   ].sort((a, b) => (a.item.day || 99) - (b.item.day || 99));
 
   const cats = {};
-  for (const i of [...fixed, ...expenses]) cats[i.cat || 'otros'] = (cats[i.cat || 'otros'] || 0) + (i.amount || 0);
+  for (const f of fixed) cats[f.cat || 'otros'] = (cats[f.cat || 'otros'] || 0) + fixedAmount(f, m);
+  for (const e of expenses) cats[e.cat || 'otros'] = (cats[e.cat || 'otros'] || 0) + (e.amount || 0);
   if (totDebt) cats.__deudas = totDebt;
 
   return {
     m, incomes, fixed, debts, expenses, totIn, totFixed, totDebt, totExp, committed, pending, cats,
+    missing: fixed.filter((f) => missingAmount(f, m)),
     totPending: sum(pending, (p) => p.amount),
     free: totIn - committed - totExp,
   };
@@ -309,8 +315,8 @@ function monthSwitcher() {
 
 // ---------- Piezas reutilizables ----------
 
-function row({ id, lead, title, sub = '', amount = '', amountClass = '', check = null, extra = '' }) {
-  return `<div class="row" data-action="edit" data-id="${id}" role="button" tabindex="0">
+function row({ id, lead, title, sub = '', amount = '', amountClass = '', check = null, extra = '', action = 'edit' }) {
+  return `<div class="row" data-action="${action}" data-id="${id}" role="button" tabindex="0">
     ${check ? checkBtn(check) : ''}
     ${lead ? `<div class="bubble">${lead}</div>` : ''}
     <div class="row-main">
@@ -339,6 +345,25 @@ function dueText(item, m) {
 }
 
 const join = (...parts) => parts.filter(Boolean).join(' · ');
+const monthName = (m) => monthLabel(m).split(' ')[0].toLowerCase();
+
+function fixedRow(f, m, { check = true } = {}) {
+  const missing = missingAmount(f, m);
+  return row({
+    id: f.id,
+    action: f.variable ? 'month-amount' : 'edit',
+    check: check ? { id: f.id, on: isPaid(f, m), label: f.name } : null,
+    lead: CAT[f.cat]?.emoji || '📦',
+    title: f.name,
+    sub: join(
+      CAT[f.cat]?.label,
+      esc(f.person),
+      missing ? `<span class="tone-warn">Falta el monto de ${monthName(m)}</span>` : '',
+      dueText(f, m),
+    ),
+    amount: missing ? `<span class="approx">≈ ${fmt(fixedAmount(f, m))}</span>` : fmt(fixedAmount(f, m)),
+  });
+}
 
 function sectionHead(title, right = '') {
   return `<div class="section-head"><h2>${title}</h2>${right ? `<span>${right}</span>` : ''}</div>`;
@@ -416,6 +441,9 @@ function viewResumen(c) {
       ? { tone: 'warn', text: 'Muy justo', ic: 'alert' }
       : { tone: 'bad', text: 'No alcanza', ic: 'alert' };
 
+  const estimates = c.missing.length
+    ? `<div class="hero-note">${icon('alert', 14)} Incluye ${c.missing.length} ${c.missing.length === 1 ? 'monto aproximado' : 'montos aproximados'}: faltan cargar datos de este mes.</div>`
+    : '';
   parts.push(`<section class="card hero">
     <div class="hero-label">${c.free >= 0 ? 'Les queda disponible' : 'Les falta'}</div>
     <div class="hero-amount ${c.free < 0 ? 'tone-bad' : ''}">${fmt(Math.abs(c.free))}</div>
@@ -425,6 +453,7 @@ function viewResumen(c) {
       <span class="pill pill-${status.tone}">${icon(status.ic, 14)} ${status.text}</span>
       <span class="muted">${c.totIn > 0 ? `Usan el ${Math.round(pct * 100)}% de lo que entra` : 'Carguen los ingresos para calcular cuánto queda'}</span>
     </div>
+    ${estimates}
   </section>`);
 
   if (c.free < 0 && c.totIn > 0) {
@@ -438,6 +467,20 @@ function viewResumen(c) {
     { label: 'Gastos del mes', value: fmt(c.totExp), go: 'gastos' },
   ]));
 
+  // Montos que cambian cada mes y todavía no se cargaron
+  if (c.missing.length) {
+    parts.push(sectionHead(`Faltan datos de ${monthName(c.m)}`, `${c.missing.length} ${c.missing.length === 1 ? 'monto' : 'montos'}`));
+    parts.push(`<div class="list card missing">${c.missing.map((f) => row({
+      id: f.id,
+      action: 'month-amount',
+      lead: CAT[f.cat]?.emoji || '📦',
+      title: f.name,
+      sub: `Hasta que lo carguen se calcula con ≈ ${fmt(fixedAmount(f, c.m))}`,
+      amount: '<span class="load-btn">Cargar</span>',
+    })).join('')}</div>`);
+    parts.push('<p class="hint">Estos gastos cambian todos los meses. Cuando llegue la boleta, carguen cuánto vino.</p>');
+  }
+
   // Lo que falta pagar
   if (c.fixed.length || c.debts.length) {
     if (c.pending.length) {
@@ -447,7 +490,8 @@ function viewResumen(c) {
         check: { id: item.id, on: false, label: item.name },
         title: item.name,
         sub: join(item.kind === 'debt' ? 'Cuota de deuda' : CAT[item.cat]?.label, dueText(item, c.m)),
-        amount: fmt(amount),
+        amount: item.kind === 'fixed' && missingAmount(item, c.m) ? `<span class="approx">≈ ${fmt(amount)}</span>` : fmt(amount),
+        action: item.kind === 'fixed' && item.variable ? 'month-amount' : 'edit',
       })).join('')}</div>`);
       parts.push('<p class="hint">Tocá el círculo cuando algo ya esté pagado.</p>');
     } else {
@@ -506,20 +550,13 @@ function viewIngresos(c) {
 
 function viewFijos(c) {
   if (!c.fixed.length) return empty('fixed', 'Carguen lo que se paga todos los meses: alquiler, luz, gas, internet, colegio…');
-  const paid = sum(c.fixed.filter((f) => isPaid(f, c.m)), (f) => f.amount);
+  const paid = sum(c.fixed.filter((f) => isPaid(f, c.m)), (f) => fixedAmount(f, c.m));
   return summaryTiles([
     { label: 'Total por mes', value: fmt(c.totFixed) },
     { label: 'Ya pagado', value: fmt(paid), tone: 'good' },
     { label: 'Falta pagar', value: fmt(c.totFixed - paid), tone: c.totFixed - paid > 0 ? 'warn' : '' },
-  ]) + `<div class="list card">${c.fixed.map((f) => row({
-    id: f.id,
-    check: { id: f.id, on: isPaid(f, c.m), label: f.name },
-    lead: CAT[f.cat]?.emoji || '📦',
-    title: f.name,
-    sub: join(CAT[f.cat]?.label, esc(f.person), dueText(f, c.m)),
-    amount: fmt(f.amount),
-  })).join('')}</div>
-  <p class="hint">Tocá el círculo cuando lo paguen. Cada mes empieza sin marcar.</p>`;
+  ]) + `<div class="list card">${c.fixed.map((f) => fixedRow(f, c.m)).join('')}</div>
+  <p class="hint">Tocá el círculo cuando lo paguen. Cada mes empieza sin marcar. ${c.missing.length ? 'Los que dicen <b>≈</b> son aproximados: tocalos para cargar el monto real.' : ''}</p>`;
 }
 
 function viewGastos(c) {
@@ -672,7 +709,7 @@ function fixedSuggestions() {
   const list = FIXED_SUGGESTIONS.filter((s) => !existing.has(s.name.toLowerCase()));
   if (!list.length) return '';
   return `<div class="field"><span class="field-label">Elegí uno o escribilo abajo</span>
-    <div class="chips">${list.map((s) => `<button type="button" class="chip-btn" data-action="suggest" data-name="${esc(s.name)}" data-cat="${s.cat}" data-person="${esc(s.person || '')}">${s.emoji} ${esc(s.name)}</button>`).join('')}</div>
+    <div class="chips">${list.map((s) => `<button type="button" class="chip-btn" data-action="suggest" data-name="${esc(s.name)}" data-cat="${s.cat}" data-person="${esc(s.person || '')}" data-variable="${!!s.variable}">${s.emoji} ${esc(s.name)}</button>`).join('')}</div>
   </div>`;
 }
 function segmented(name, options, selected) {
@@ -700,7 +737,8 @@ function formBody(kind, it) {
     case 'fixed':
       return (it.name ? '' : fixedSuggestions())
         + field('¿Qué es?', textInput('name', it.name, 'Ej: Alquiler, Luz, Internet'))
-        + field('¿Cuánto se paga por mes?', moneyInput('amount', it.amount, true), 'Si cambia todos los meses (como la luz), poné un promedio y después lo ajustás.')
+        + field('¿El monto cambia de un mes a otro?', segmented('variable', [{ value: 'no', label: 'Siempre igual' }, { value: 'si', label: 'Cambia cada mes' }], it.variable === false ? 'no' : it.variable || !it.name ? 'si' : 'no'), 'Si cambia, cada mes la app te pide el monto real.')
+        + field('¿Cuánto se paga por mes, más o menos?', moneyInput('amount', it.amount, true), 'Si cambia, poné lo último que pagaron: se usa hasta que carguen el del mes.')
         + field('Categoría', catChips(it.cat || 'servicios'))
         + field('Día de vencimiento <span class="opt">(opcional)</span>', dayInput('day', it.day), 'Te avisa cuando está por vencer.')
         + personChips(it.person, '¿De quién es? <span class="opt">(opcional)</span>');
@@ -721,7 +759,7 @@ function readForm(kind, form) {
   switch (kind) {
     case 'expense': return { amount: money('amount'), cat: g('cat') || 'otros', desc: g('desc'), date: g('date') || defaultExpenseDate(), person: g('person') };
     case 'income': return { name: g('name'), amount: money('amount'), person: g('person'), freq: g('freq') || 'mensual', day: day('day') };
-    case 'fixed': return { name: g('name'), amount: money('amount'), cat: g('cat') || 'otros', day: day('day'), person: g('person') };
+    case 'fixed': return { name: g('name'), amount: money('amount'), cat: g('cat') || 'otros', day: day('day'), person: g('person'), variable: g('variable') !== 'no' };
     case 'debt': return { name: g('name'), creditor: g('creditor'), saldo: money('saldo'), cuota: money('cuota'), day: day('day') };
   }
 }
@@ -780,6 +818,52 @@ function openForm(kind, item = null) {
   if (!matchMedia('(pointer: coarse)').matches) form.querySelector('input:not([type=radio])')?.focus();
 }
 
+function openMonthAmount(item, { pay = false } = {}) {
+  const m = state.month;
+  const current = item.amounts?.[m];
+  const prevMonth = addMonths(m, -1);
+  const prev = item.amounts?.[prevMonth];
+  const paid = isPaid(item, m);
+  const hint = prev != null
+    ? `En ${monthName(prevMonth)} fue ${fmt(prev)}.`
+    : `El aproximado es ${fmt(item.amount)}.`;
+  openSheet(`<form class="sheet-form" data-form="month-amount" data-id="${item.id}" novalidate>
+    <div class="sheet-head">
+      <button type="button" class="link-btn" data-action="close">Cancelar</button>
+      <h2>${esc(item.name)}</h2>
+      <span></span>
+    </div>
+    <div class="sheet-body">
+      ${field(`¿Cuánto vino en ${monthName(m)}?`, moneyInput('amount', current, true), hint)}
+      <div class="form-error" role="alert" hidden></div>
+      ${paid
+        ? '<button type="submit" class="btn btn-primary" value="save">Guardar</button>'
+        : `<button type="submit" class="btn btn-primary" value="${pay ? 'pay' : 'save'}">${pay ? 'Guardar y marcar pagado' : 'Guardar'}</button>
+           <button type="submit" class="btn btn-secondary" value="${pay ? 'save' : 'pay'}">${pay ? 'Solo guardar el monto' : 'Guardar y marcar pagado'}</button>`}
+      <button type="button" class="btn btn-secondary" data-action="edit-full" data-id="${item.id}">Editar ${esc(item.name)}</button>
+    </div>
+  </form>`);
+  if (!matchMedia('(pointer: coarse)').matches) sheetEl.querySelector('[data-money]').focus();
+}
+
+function saveMonthAmount(form, submitter) {
+  const item = store.items.find((i) => i.id === form.dataset.id);
+  if (!item) return closeSheet();
+  const value = parseMoney(form.elements.amount.value);
+  if (!(value > 0)) {
+    const box = form.querySelector('.form-error');
+    box.hidden = false;
+    box.textContent = 'Poné un monto mayor a cero.';
+    return;
+  }
+  const m = state.month;
+  const latest = Object.keys(item.amounts || {}).sort().pop();
+  const pay = submitter?.value === 'pay';
+  store.setMonthAmount(item, m, value, { paid: pay, estimate: !latest || m >= latest }).catch(fail);
+  closeSheet();
+  toast(pay ? 'Monto guardado y marcado como pagado' : 'Monto guardado');
+}
+
 function saveItem(form) {
   const kind = form.dataset.kind;
   const id = form.dataset.id;
@@ -826,10 +910,20 @@ const ACTIONS = {
     const item = store.items.find((i) => i.id === el.dataset.id);
     if (item) openForm(item.kind, item);
   },
+  'month-amount'(el) {
+    const item = store.items.find((i) => i.id === el.dataset.id);
+    if (item) openMonthAmount(item);
+  },
+  'edit-full'(el) {
+    const item = store.items.find((i) => i.id === el.dataset.id);
+    if (item) openForm(item.kind, item);
+  },
   toggle(el) {
     const item = store.items.find((i) => i.id === el.dataset.id);
     if (!item) return;
     const on = !isPaid(item, state.month);
+    // Si cambia cada mes y no tiene el monto real, primero lo pide.
+    if (on && item.kind === 'fixed' && missingAmount(item, state.month)) return openMonthAmount(item, { pay: true });
     store.setPaid(item, state.month, on).catch(fail);
     if (on) toast(item.kind === 'debt' ? 'Cuota pagada · se descontó del saldo' : 'Marcado como pagado');
   },
@@ -845,6 +939,8 @@ const ACTIONS = {
     if (cat) cat.checked = true;
     const person = el.dataset.person && [...form.querySelectorAll('input[name=person]')].find((i) => i.value === el.dataset.person);
     if (person) person.checked = true;
+    const variable = form.querySelector(`input[name=variable][value="${el.dataset.variable === 'true' ? 'si' : 'no'}"]`);
+    if (variable) variable.checked = true;
     form.querySelectorAll('.chip-btn.on').forEach((b) => b.classList.remove('on'));
     el.classList.add('on');
     form.elements.amount.focus();
@@ -935,7 +1031,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && sheetEl.firstChild) closeSheet();
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.row[data-action]')) {
     e.preventDefault();
-    ACTIONS.edit(e.target);
+    ACTIONS[e.target.dataset.action]?.(e.target);
   }
 });
 
@@ -949,6 +1045,7 @@ document.addEventListener('submit', (e) => {
   const form = e.target;
   e.preventDefault();
   if (form.dataset.form === 'item') saveItem(form);
+  if (form.dataset.form === 'month-amount') saveMonthAmount(form, e.submitter);
   if (form.dataset.form === 'add-person') {
     const name = form.elements.person.value.trim();
     if (!name) return;
