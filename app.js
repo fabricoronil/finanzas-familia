@@ -796,36 +796,38 @@ function defaultExpenseDate() {
   return state.month === thisMonth() ? isoDate(new Date()) : `${state.month}-01`;
 }
 
+// Lo que casi nunca hace falta queda plegado, para cargar rápido.
+const more = (summary, html) => `<details class="more"><summary>${summary}</summary><div class="more-body">${html}</div></details>`;
+
 function formBody(kind, it) {
   switch (kind) {
     case 'expense':
       return field('¿Cuánto gastaron?', moneyInput('amount', it.amount, true))
         + field('¿En qué?', catChips(it.cat || 'comida'))
-        + field('Detalle <span class="opt">(opcional)</span>', textInput('desc', it.desc, 'Ej: Súper del fin de semana'))
-        + field('Fecha', `<input class="input" type="date" name="date" value="${esc(it.date || defaultExpenseDate())}">`)
-        + personChips(it.person);
-    case 'income':
-      return field('¿Qué es?', textInput('name', it.name, 'Ej: Sueldo de papá'))
-        + field('¿Cuánto entra?', moneyInput('amount', it.amount, true))
+        + field('Detalle <span class="opt">(opcional)</span>', textInput('desc', it.desc, 'Ej: Súper, nafta, farmacia'))
         + personChips(it.person)
-        + field('¿Cada cuánto?', segmented('freq', [{ value: 'mensual', label: 'Todos los meses' }, { value: 'unico', label: 'Solo este mes' }], it.freq || 'mensual'))
-        + field('Día de cobro <span class="opt">(opcional)</span>', dayInput('day', it.day));
+        + more('Otra fecha', field('Fecha', `<input class="input" type="date" name="date" value="${esc(it.date || defaultExpenseDate())}">`, 'Si no la cambiás, queda hoy.'));
+    case 'income':
+      return field('¿Qué es?', textInput('name', it.name, 'Ej: Sueldo, jubilación, alquiler'))
+        + field('¿Cuánto entra por mes?', moneyInput('amount', it.amount, true))
+        + personChips(it.person)
+        + more('Más opciones', field('¿Cada cuánto?', segmented('freq', [{ value: 'mensual', label: 'Todos los meses' }, { value: 'unico', label: 'Solo este mes' }], it.freq || 'mensual'))
+          + field('Día de cobro', dayInput('day', it.day)));
     case 'fixed':
       return (it.name ? '' : fixedSuggestions())
         + field('¿Qué es?', textInput('name', it.name, 'Ej: Alquiler, Luz, Internet'))
-        + field('¿El monto cambia de un mes a otro?', segmented('variable', [{ value: 'no', label: 'Siempre igual' }, { value: 'si', label: 'Cambia cada mes' }], it.variable === false ? 'no' : it.variable || !it.name ? 'si' : 'no'), 'Si cambia, cada mes la app te pide el monto real.')
-        + field('¿Cuánto se paga por mes, más o menos?', moneyInput('amount', it.amount, true), 'Si cambia, poné lo último que pagaron: se usa hasta que carguen el del mes.')
-        + field('Categoría', catChips(it.cat || 'servicios'))
-        + field('Día de vencimiento <span class="opt">(opcional)</span>', dayInput('day', it.day), 'Te avisa cuando está por vencer.')
-        + personChips(it.person, '¿De quién es? <span class="opt">(opcional)</span>');
+        + field('¿Cuánto se paga por mes?', moneyInput('amount', it.amount, true), 'Si cambia cada mes, poné lo último que pagaron.')
+        + personChips(it.person, '¿De quién es?')
+        + more('Más opciones', field('¿El monto cambia de un mes a otro?', segmented('variable', [{ value: 'no', label: 'Siempre igual' }, { value: 'si', label: 'Cambia cada mes' }], it.variable === false ? 'no' : it.variable || !it.name ? 'si' : 'no'), 'Si cambia, cada mes la app te pide el monto real.')
+          + field('Categoría', catChips(it.cat || 'servicios'))
+          + field('Día de vencimiento', dayInput('day', it.day), 'Te avisa cuando está por vencer.'));
     case 'debt':
-      return field('¿Qué deuda es?', textInput('name', it.name, 'Ej: Tarjeta Visa, Préstamo del banco'))
-        + field('¿A quién se le debe? <span class="opt">(opcional)</span>', textInput('creditor', it.creditor, 'Ej: Banco Nación'))
-        + field('¿Cuánto falta pagar en total?', moneyInput('saldo', it.saldo, true))
-        + field('¿Cuánto es la cuota por mes?', moneyInput('cuota', it.cuota), 'Si no tiene cuota fija, dejalo vacío.')
-        + field('Día de vencimiento <span class="opt">(opcional)</span>', dayInput('day', it.day))
-        + personChips(it.person, '¿De quién es la deuda?')
-        + '<div class="preview" data-preview></div>';
+      return field('¿Qué deuda es?', textInput('name', it.name, 'Ej: Visa Macro, Préstamo del auto'))
+        + field('¿Cuánto deben en total?', moneyInput('saldo', it.saldo, true))
+        + field('Cuota por mes <span class="opt">(si tiene)</span>', moneyInput('cuota', it.cuota))
+        + personChips(it.person, '¿De quién es?')
+        + '<div class="preview" data-preview></div>'
+        + more('Más opciones', field('Día de vencimiento', dayInput('day', it.day)));
   }
 }
 
@@ -837,7 +839,7 @@ function readForm(kind, form) {
     case 'expense': return { amount: money('amount'), cat: g('cat') || 'otros', desc: g('desc'), date: g('date') || defaultExpenseDate(), person: g('person') };
     case 'income': return { name: g('name'), amount: money('amount'), person: g('person'), freq: g('freq') || 'mensual', day: day('day') };
     case 'fixed': return { name: g('name'), amount: money('amount'), cat: g('cat') || 'otros', day: day('day'), person: g('person'), variable: g('variable') !== 'no' };
-    case 'debt': return { name: g('name'), creditor: g('creditor'), saldo: money('saldo'), cuota: money('cuota'), day: day('day'), person: g('person') };
+    case 'debt': return { name: g('name'), saldo: money('saldo'), cuota: money('cuota'), day: day('day'), person: g('person') };
   }
 }
 
