@@ -358,6 +358,14 @@ h1, h2, p { margin: 0; }
 .callout-bad { background: var(--bad-soft); color: var(--label); }
 .callout-bad .i { color: var(--bad); }
 .callout-good { background: var(--good-soft); margin-top: 24px; }
+.callout-info { background: var(--accent-soft); }
+.callout-info .i { color: var(--accent); }
+.hero-period {
+  display: flex; align-items: center; gap: 6px;
+  margin: -8px 0 16px;
+  font-size: 13px;
+  color: var(--label-2);
+}
 .callout-good .i { color: var(--good); }
 
 .install {

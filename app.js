@@ -346,6 +346,18 @@ function dueText(item, m) {
 
 const join = (...parts) => parts.filter(Boolean).join(' · ');
 const monthName = (m) => monthLabel(m).split(' ')[0].toLowerCase();
+const daysInMonth = (m) => { const d = fromKey(m); return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); };
+
+// "Del 1 al 31 de octubre · quedan 6 días"
+function monthPeriod(m) {
+  const last = daysInMonth(m);
+  const range = `Del 1 al ${last} de ${monthName(m)}`;
+  const cur = thisMonth();
+  if (m < cur) return `${range} · mes terminado`;
+  if (m > cur) return `${range} · todavía no empezó`;
+  const left = last - new Date().getDate();
+  return `${range} · ${left === 0 ? 'hoy es el último día' : left === 1 ? 'queda 1 día' : `quedan ${left} días`}`;
+}
 
 function fixedRow(f, m, { check = true } = {}) {
   const missing = missingAmount(f, m);
@@ -448,6 +460,7 @@ function viewResumen(c) {
     <div class="hero-label">${c.free >= 0 ? 'Les queda disponible' : 'Les falta'}</div>
     <div class="hero-amount ${c.free < 0 ? 'tone-bad' : ''}">${fmt(Math.abs(c.free))}</div>
     <div class="hero-sub">Entran <b>${fmt(c.totIn)}</b> y salen <b>${fmt(out)}</b> en ${monthLabel(c.m).toLowerCase()}</div>
+    <div class="hero-period">${icon('fijos', 14)} ${monthPeriod(c.m)}</div>
     ${c.totIn > 0 ? meter(pct, status.tone) : ''}
     <div class="hero-foot">
       <span class="pill pill-${status.tone}">${icon(status.ic, 14)} ${status.text}</span>
@@ -455,6 +468,17 @@ function viewResumen(c) {
     </div>
     ${estimates}
   </section>`);
+
+  // Primera semana del mes: recordatorio de qué cargar.
+  const today = new Date();
+  if (c.m === thisMonth() && today.getDate() <= 7) {
+    const todo = [
+      c.missing.length ? `cargar ${c.missing.length === 1 ? 'el monto' : `los ${c.missing.length} montos`} que cambian (${c.missing.map((f) => esc(f.name)).slice(0, 3).join(', ')}${c.missing.length > 3 ? '…' : ''})` : '',
+      c.pending.length ? 'ir marcando los pagos a medida que paguen' : '',
+      'cargar los gastos del día a día',
+    ].filter(Boolean);
+    parts.push(`<div class="callout callout-info">${icon('fijos', 20)}<div><b>¡Empezó ${monthName(c.m)}!</b> El mes arranca de cero: ${todo.join(', ').replace(/, ([^,]*)$/, ' y $1')}.</div></div>`);
+  }
 
   if (c.free < 0 && c.totIn > 0) {
     parts.push(`<div class="callout callout-bad">${icon('alert', 20)}<div><b>Este mes faltan ${fmt(-c.free)}.</b> Lo que hay que pagar supera lo que entra. Miren abajo a dónde va la plata para ver qué se puede recortar.</div></div>`);
