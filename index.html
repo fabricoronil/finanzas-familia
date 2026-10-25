@@ -12,8 +12,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Finanzas">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icon-512.png">
+  <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="manifest" href="manifest.webmanifest">
+  <script>
+    // La app vive en el mismo dominio que el inicio de sesión de Google:
+    // así la sesión funciona y no se pierde en la app instalada en el iPhone.
+    if (location.hostname === 'fabricoronil.github.io' || location.hostname.endsWith('.web.app')) {
+      location.replace('https://gestiondedinero-df3ee.firebaseapp.com/' + location.hash);
+    }
+  </script>
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="app.js"></script>
 </head>

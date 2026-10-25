@@ -186,6 +186,36 @@ function render() {
   else appEl.innerHTML = shell();
 }
 
+// ---------- Instalar en la pantalla de inicio ----------
+
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isPhone = () => matchMedia('(pointer: coarse)').matches;
+let installPrompt = null;
+let installDismissed = false;
+try { installDismissed = localStorage.getItem('finanzas-familia:instalar-oculto') === '1'; } catch {}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  render();
+});
+window.addEventListener('appinstalled', () => { installPrompt = null; render(); });
+
+function installBanner() {
+  if (isStandalone() || installDismissed || !isPhone()) return '';
+  const how = installPrompt
+    ? '<button class="btn btn-primary btn-inline" data-action="install">Instalar</button>'
+    : isIOS()
+      ? `<span>Tocá <b>Compartir</b> <svg class="share-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg> abajo y después <b>Agregar a inicio</b>.</span>`
+      : '<span>Tocá el menú <b>⋮</b> arriba a la derecha y después <b>Agregar a la pantalla principal</b>.</span>';
+  return `<section class="card install">
+    <img src="icon-180.png" alt="" width="48" height="48">
+    <div class="install-text"><b>Tenela como una app</b>${how}</div>
+    <button class="install-close" data-action="install-dismiss" aria-label="Ocultar">${icon('x', 16)}</button>
+  </section>`;
+}
+
 // ---------- Pantallas de acceso ----------
 
 function loginScreen() {
@@ -197,6 +227,7 @@ function loginScreen() {
       <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg>
       Entrar con Google
     </button>
+    <p class="muted small">Entrás una sola vez: la sesión queda guardada en este celular.</p>
   </div>`;
 }
 
@@ -334,6 +365,8 @@ function viewResumen(c) {
   const has = (k) => store.items.some((i) => i.kind === k);
   const setupDone = has('income') && has('fixed');
   const parts = [];
+
+  parts.push(installBanner());
 
   if (store.mode === 'local') {
     parts.push(`<a href="#ajustes" class="banner">${icon('alert', 18)}<span><b>Modo prueba:</b> los datos se guardan solo en este dispositivo.</span></a>`);
@@ -778,6 +811,18 @@ const ACTIONS = {
   'month-next'() { state.month = addMonths(state.month, 1); render(); },
   'month-today'() { state.month = thisMonth(); render(); },
   close: closeSheet,
+  async install() {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => {});
+    installPrompt = null;
+    render();
+  },
+  'install-dismiss'() {
+    installDismissed = true;
+    try { localStorage.setItem('finanzas-familia:instalar-oculto', '1'); } catch {}
+    render();
+  },
   backdrop(el, e) { if (e.target === el) closeSheet(); },
   delete(el) {
     if (!el.classList.contains('confirm')) {
@@ -914,3 +959,7 @@ function toast(msg, tone = '') {
 store.subscribe(render);
 render();
 store.init();
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+// Le pide al teléfono que no borre los datos ni la sesión para liberar espacio.
+navigator.storage?.persist?.().catch(() => {});

@@ -126,7 +126,13 @@ async function cloudBackend() {
     import(SDK + 'firebase-firestore.js'),
   ]);
   const app = initializeApp(firebaseConfig);
-  const auth = A.getAuth(app);
+  // La sesión queda guardada en el dispositivo y no vence sola: solo se cierra
+  // si la persona toca "Cerrar sesión".
+  const auth = A.initializeAuth(app, {
+    persistence: [A.indexedDBLocalPersistence, A.browserLocalPersistence],
+    popupRedirectResolver: A.browserPopupRedirectResolver,
+  });
+  A.getRedirectResult(auth).catch((e) => console.warn('Inicio de sesión', e));
   let db;
   try {
     // Caché local: la app abre al instante y funciona sin señal.
@@ -202,6 +208,13 @@ async function cloudBackend() {
     async signIn() {
       const provider = new A.GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
+      // En el celular (y sobre todo en la app instalada) se entra por
+      // redirección: la página va a Google y vuelve. Funciona porque la app se
+      // sirve desde el mismo dominio que el inicio de sesión (authDomain).
+      const sameDomain = location.hostname === firebaseConfig.authDomain;
+      if (sameDomain && matchMedia('(pointer: coarse)').matches) {
+        return A.signInWithRedirect(auth, provider);
+      }
       try {
         await A.signInWithPopup(auth, provider);
       } catch (e) {
