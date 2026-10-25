@@ -47,9 +47,15 @@ export const store = {
   add: (data) => backend.add({ created: Date.now(), ...data }),
   update: (id, data) => backend.update(id, data),
   remove: (id) => backend.remove(id),
-  // Marca un gasto fijo o la cuota de una deuda como pagada (o no) en un mes.
-  // En las deudas, pagar descuenta la cuota del saldo; desmarcar la devuelve.
+  // Vuelve a guardar algo que se borró (para "Deshacer").
+  restore: (item) => backend.restore(item),
+  // Marca un gasto fijo como pagado (o no) en un mes.
   setPaid: (item, month, paid) => backend.setPaid(item, month, paid),
+  // Pago de una deuda (entero o una parte): se descuenta del saldo y queda en
+  // el historial. `pago` = { id, monto, fecha, mes }.
+  payDebt: (item, pago) => backend.payDebt(item, pago),
+  // Borra pagos de una deuda y devuelve esa plata al saldo.
+  removePagos: (item, pagos) => backend.removePagos(item, pagos),
   // Monto real de un gasto fijo que cambia cada mes. Con `paid` también lo
   // marca como pagado; con `estimate` pasa a ser el aproximado de los meses
   // que todavía no tienen dato.
@@ -73,7 +79,7 @@ function set(patch) {
   listeners.forEach((fn) => fn());
 }
 
-const debtPayment = (item) => Math.min(item.cuota || 0, item.saldo || 0);
+const paidIn = (item, m) => Number(item.paid?.[m]) || 0;
 
 function localBackend() {
   let db = null;
@@ -100,23 +106,30 @@ function localBackend() {
     },
     async update(id, data) { Object.assign(db.items[id], data); save(); },
     async remove(id) { delete db.items[id]; save(); },
+    async restore({ id, ...data }) { db.items[id] = data; save(); },
     async setPaid(item, m, paid) {
       const it = db.items[item.id];
       it.paid ||= {};
-      if (item.kind === 'debt') {
-        if (paid) {
-          const amount = debtPayment(it);
-          it.paid[m] = amount;
-          it.saldo = (it.saldo || 0) - amount;
-        } else if (m in it.paid) {
-          it.saldo = (it.saldo || 0) + it.paid[m];
-          delete it.paid[m];
-        }
-      } else if (paid) {
-        it.paid[m] = true;
-      } else {
-        delete it.paid[m];
+      if (paid) it.paid[m] = true;
+      else delete it.paid[m];
+      save();
+    },
+    async payDebt(item, pago) {
+      const it = db.items[item.id];
+      (it.paid ||= {})[pago.mes] = paidIn(it, pago.mes) + pago.monto;
+      it.saldo = (it.saldo || 0) - pago.monto;
+      (it.pagos ||= []).push(pago);
+      save();
+    },
+    async removePagos(item, pagos) {
+      const it = db.items[item.id];
+      for (const p of pagos) {
+        const left = paidIn(it, p.mes) - p.monto;
+        if (left > 0.5) it.paid[p.mes] = left;
+        else delete it.paid?.[p.mes];
+        it.saldo = (it.saldo || 0) + p.monto;
       }
+      it.pagos = (it.pagos || []).filter((p) => !pagos.some((x) => x.id === p.id));
       save();
     },
     async setMonthAmount(item, m, value, { paid, estimate }) {
@@ -200,18 +213,23 @@ async function cloudBackend() {
     },
     update: (id, data) => F.updateDoc(ref(id), data),
     remove: (id) => F.deleteDoc(ref(id)),
-    async setPaid(item, m, paid) {
-      const path = new F.FieldPath('paid', m);
-      if (item.kind === 'debt') {
-        if (paid) {
-          const amount = debtPayment(item);
-          return F.updateDoc(ref(item.id), path, amount, 'saldo', F.increment(-amount));
-        }
-        const prev = item.paid?.[m];
-        if (prev == null) return;
-        return F.updateDoc(ref(item.id), path, F.deleteField(), 'saldo', F.increment(prev));
+    restore: ({ id, ...data }) => F.setDoc(ref(id), data),
+    setPaid: (item, m, paid) => F.updateDoc(ref(item.id), new F.FieldPath('paid', m), paid ? true : F.deleteField()),
+    payDebt: (item, pago) => F.updateDoc(ref(item.id),
+      new F.FieldPath('paid', pago.mes), F.increment(pago.monto),
+      'saldo', F.increment(-pago.monto),
+      'pagos', F.arrayUnion(pago)),
+    removePagos(item, pagos) {
+      const args = [];
+      const byMonth = {};
+      for (const p of pagos) byMonth[p.mes] = (byMonth[p.mes] || 0) + p.monto;
+      for (const [m, monto] of Object.entries(byMonth)) {
+        const left = paidIn(item, m) - monto;
+        args.push(new F.FieldPath('paid', m), left > 0.5 ? left : F.deleteField());
       }
-      return F.updateDoc(ref(item.id), path, paid ? true : F.deleteField());
+      const total = pagos.reduce((t, p) => t + p.monto, 0);
+      args.push('saldo', F.increment(total), 'pagos', F.arrayRemove(...pagos));
+      return F.updateDoc(ref(item.id), ...args);
     },
     setMonthAmount(item, m, value, { paid, estimate }) {
       const extra = [];

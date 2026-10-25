@@ -2,7 +2,7 @@
 // Los archivos propios se buscan primero en internet (así siempre llega la
 // última versión) y, si no hay conexión, se usan los guardados.
 // Los datos (Firestore) no pasan por acá: Firebase tiene su propia caché.
-const CACHE = 'finanzas-familia-v2';
+const CACHE = 'finanzas-familia-v3';
 const SHELL = [
   './',
   './index.html',

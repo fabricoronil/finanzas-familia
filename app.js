@@ -113,12 +113,18 @@ function dayLabel(iso) {
 
 // ---------- Cálculos ----------
 
-const isPaid = (item, m) => item.paid?.[m] != null;
+// Deudas: lo que pagaron en el mes, lo que corresponde pagar (la cuota, o lo
+// que pagaron si fue más) y lo que todavía falta de la cuota.
+const paidAmount = (d, m) => Number(d.paid?.[m]) || 0;
+const debtCuota = (d, m) => { const p = paidAmount(d, m); return Math.max(p, Math.min(d.cuota || 0, (d.saldo || 0) + p)); };
+const debtLeft = (d, m) => Math.max(0, debtCuota(d, m) - paidAmount(d, m));
+const isPaid = (item, m) => (item.kind === 'debt'
+  ? paidAmount(item, m) > 0 && debtLeft(item, m) < 0.5
+  : item.paid?.[m] != null);
 // Gasto fijo: el monto real del mes si ya lo cargaron, si no el aproximado.
 const fixedAmount = (f, m) => f.amounts?.[m] ?? f.amount ?? 0;
 // Falta el dato si cambia cada mes, no se cargó y el mes ya empezó.
 const missingAmount = (f, m) => !!f.variable && f.amounts?.[m] == null && m <= thisMonth();
-const debtCuota = (d, m) => (isPaid(d, m) ? d.paid[m] : Math.min(d.cuota || 0, d.saldo || 0));
 
 function calc(m) {
   const items = store.items;
@@ -127,8 +133,10 @@ function calc(m) {
     .filter((i) => i.kind === 'income' && (i.freq === 'unico' ? i.month === m : (i.desde || '') <= m))
     .sort(byDay);
   const fixed = items.filter((i) => i.kind === 'fixed' && (i.desde || '') <= m).sort(byDay);
+  // Una deuda cargada hoy ya existe: cuenta desde el mes actual aunque la hayan
+  // cargado mirando un mes que viene.
   const debts = items
-    .filter((i) => i.kind === 'debt' && (i.desde || '') <= m && ((i.saldo || 0) > 0.5 || isPaid(i, m)))
+    .filter((i) => i.kind === 'debt' && ((i.desde || '') <= m || m >= thisMonth()) && ((i.saldo || 0) > 0.5 || paidAmount(i, m) > 0))
     .sort(byDay);
   const expenses = items
     .filter((i) => i.kind === 'expense' && (i.date || '').startsWith(m))
@@ -142,7 +150,7 @@ function calc(m) {
 
   const pending = [
     ...fixed.filter((f) => !isPaid(f, m)).map((item) => ({ item, amount: fixedAmount(item, m) })),
-    ...debts.filter((d) => !isPaid(d, m) && debtCuota(d, m) > 0).map((item) => ({ item, amount: debtCuota(item, m) })),
+    ...debts.filter((d) => debtLeft(d, m) > 0.5).map((item) => ({ item, amount: debtLeft(item, m) })),
   ].sort((a, b) => (a.item.day || 99) - (b.item.day || 99));
 
   const cats = {};
@@ -156,6 +164,29 @@ function calc(m) {
     totPending: sum(pending, (p) => p.amount),
     free: totIn - committed - totExp,
   };
+}
+
+// Lo de cada persona en el mes. Con name = '' junta lo que no es de nadie en
+// particular ("De la casa").
+function personCalc(c, name) {
+  const mine = (i) => (i.person || '') === name;
+  const incomes = c.incomes.filter(mine);
+  const fixed = c.fixed.filter(mine);
+  const debts = c.debts.filter(mine);
+  const expenses = c.expenses.filter(mine);
+  const totIn = sum(incomes, (i) => i.amount);
+  const totOut = sum(fixed, (f) => fixedAmount(f, c.m)) + sum(debts, (d) => debtCuota(d, c.m)) + sum(expenses, (e) => e.amount);
+  return { name, incomes, fixed, debts, expenses, totIn, totOut, count: incomes.length + fixed.length + debts.length + expenses.length };
+}
+
+function peopleCalc(c) {
+  const known = store.settings.people || [];
+  // También aparece alguien que ya no está en la lista pero tiene cosas cargadas.
+  const extra = [...new Set([...c.incomes, ...c.fixed, ...c.debts, ...c.expenses].map((i) => i.person).filter((p) => p && !known.includes(p)))];
+  const list = [...known, ...extra].map((p) => personCalc(c, p));
+  const house = personCalc(c, '');
+  if (house.count) list.push(house);
+  return list;
 }
 
 // Mes en que se termina de pagar una deuda si siguen pagando la cuota.
@@ -403,6 +434,17 @@ function meter(fraction, tone) {
   return `<div class="meter"><span class="fill-${tone}" style="width:${pct.toFixed(1)}%"></span></div>`;
 }
 
+function peopleTiles(c) {
+  return `<div class="people-tiles">${peopleCalc(c).map((p) => `<button class="tile person-tile" data-action="person" data-person="${esc(p.name)}">
+    <span class="avatar ${p.name ? '' : 'house'}">${p.name ? esc(p.name.charAt(0).toUpperCase()) : '🏠'}</span>
+    <span class="person-name">${p.name ? esc(p.name) : 'De la casa'}</span>
+    <span class="tile-label">Gastos</span>
+    <span class="person-out">${fmt(p.totOut)}</span>
+    <span class="person-in ${p.totIn ? 'tone-good' : ''}">${p.totIn ? `Ingresos ${fmt(p.totIn)}` : 'Sin ingresos'}</span>
+  </button>`).join('')}</div>
+  <p class="hint">Tocá a alguien para ver el detalle. Lo que no tiene persona va a <b>De la casa</b>.</p>`;
+}
+
 // ---------- Vistas ----------
 
 const RENDER = {
@@ -491,6 +533,9 @@ function viewResumen(c) {
     { label: 'Gastos del mes', value: fmt(c.totExp), go: 'gastos' },
   ]));
 
+  parts.push(sectionHead('Por persona'));
+  parts.push(peopleTiles(c));
+
   // Montos que cambian cada mes y todavía no se cargaron
   if (c.missing.length) {
     parts.push(sectionHead(`Faltan datos de ${monthName(c.m)}`, `${c.missing.length} ${c.missing.length === 1 ? 'monto' : 'montos'}`));
@@ -513,9 +558,9 @@ function viewResumen(c) {
         id: item.id,
         check: { id: item.id, on: false, label: item.name },
         title: item.name,
-        sub: join(item.kind === 'debt' ? 'Cuota de deuda' : CAT[item.cat]?.label, dueText(item, c.m)),
+        sub: join(item.kind === 'debt' ? (paidAmount(item, c.m) > 0 ? `Cuota de deuda · pagaron ${fmt(paidAmount(item, c.m))}, falta el resto` : 'Cuota de deuda') : CAT[item.cat]?.label, dueText(item, c.m)),
         amount: item.kind === 'fixed' && missingAmount(item, c.m) ? `<span class="approx">≈ ${fmt(amount)}</span>` : fmt(amount),
-        action: item.kind === 'fixed' && item.variable ? 'month-amount' : 'edit',
+        action: item.kind === 'debt' ? 'debt' : item.kind === 'fixed' && item.variable ? 'month-amount' : 'edit',
       })).join('')}</div>`);
       parts.push('<p class="hint">Tocá el círculo cuando algo ya esté pagado.</p>');
     } else {
@@ -569,7 +614,8 @@ function viewIngresos(c) {
     sub: join(esc(i.person), i.freq === 'unico' ? 'Solo este mes' : 'Todos los meses', i.day ? `Cobra el día ${i.day}` : ''),
     amount: fmt(i.amount),
     amountClass: 'tone-good',
-  })).join('')}</div>`;
+  })).join('')}</div>
+  <p class="hint">Tocá cualquier renglón para cambiarlo o borrarlo.</p>`;
 }
 
 function viewFijos(c) {
@@ -580,7 +626,7 @@ function viewFijos(c) {
     { label: 'Ya pagado', value: fmt(paid), tone: 'good' },
     { label: 'Falta pagar', value: fmt(c.totFixed - paid), tone: c.totFixed - paid > 0 ? 'warn' : '' },
   ]) + `<div class="list card">${c.fixed.map((f) => fixedRow(f, c.m)).join('')}</div>
-  <p class="hint">Tocá el círculo cuando lo paguen. Cada mes empieza sin marcar. ${c.missing.length ? 'Los que dicen <b>≈</b> son aproximados: tocalos para cargar el monto real.' : ''}</p>`;
+  <p class="hint">Tocá el círculo cuando lo paguen. Cada mes empieza sin marcar. ${c.missing.length ? 'Los que dicen <b>≈</b> son aproximados: tocalos para cargar el monto real.' : ''} Para cambiar o borrar uno, tocalo.</p>`;
 }
 
 function viewGastos(c) {
@@ -600,7 +646,7 @@ function viewGastos(c) {
       title: e.desc || CAT[e.cat]?.label || 'Gasto',
       sub: join(e.desc ? CAT[e.cat]?.label : '', esc(e.person)),
       amount: fmt(e.amount),
-    })).join('')}</div>`).join('');
+    })).join('')}</div>`).join('') + '<p class="hint">Tocá cualquier renglón para cambiarlo o borrarlo.</p>';
 }
 
 function viewDeudas(c) {
@@ -614,12 +660,17 @@ function viewDeudas(c) {
     const p = payoff(d);
     const progress = d.inicial > 0 ? 1 - (d.saldo || 0) / d.inicial : 0;
     const canPay = (d.cuota || 0) > 0 && ((d.saldo || 0) > 0.5 || isPaid(d, c.m));
+    const paidNow = paidAmount(d, c.m);
+    const partial = paidNow > 0 && !isPaid(d, c.m)
+      ? `<span class="tone-warn">Pagaron ${fmt(paidNow)} · faltan ${fmt(debtLeft(d, c.m))} de la cuota</span>`
+      : paidNow > 0 && !(d.cuota > 0) ? `<span class="tone-good">Pagaron ${fmt(paidNow)} en ${monthName(c.m)}</span>` : '';
     return row({
       id: d.id,
+      action: 'debt',
       check: canPay ? { id: d.id, on: isPaid(d, c.m), label: d.name } : null,
       lead: canPay ? '' : '💳',
       title: d.name,
-      sub: join(esc(d.creditor), canPay ? dueText(d, c.m) : ''),
+      sub: join(esc(d.creditor), esc(d.person), partial || (canPay ? dueText(d, c.m) : '')),
       amount: fmt(d.saldo),
       extra: `<div class="row-sub">${d.cuota > 0
         ? `Cuota de ${fmt(d.cuota)}${p ? ` · ${p.n === 1 ? 'última cuota' : `faltan ${p.n}`} · termina en ${monthShort(p.end).toLowerCase()}` : ''}`
@@ -634,9 +685,9 @@ function viewDeudas(c) {
     { label: 'Libres de deudas', value: ds.last ? monthShort(ds.last) : ds.total > 0 ? '—' : '¡Ya!', sub: ds.unknown ? 'Hay deudas sin cuota' : '' },
   ]) +
     (active.length ? `<div class="list card">${active.map(debtRow).join('')}</div>
-      <p class="hint">Al marcar la cuota como pagada, se descuenta sola del saldo.</p>` : '') +
+      <p class="hint">Tocá una deuda para anotar un pago (entero o una parte), ver los pagos o borrarla. El círculo marca la cuota entera como pagada. Todo se descuenta solo del saldo.</p>` : '') +
     (done.length ? sectionHead('Terminadas 🎉') + `<div class="list card">${done.map((d) => row({
-      id: d.id, lead: '✅', title: d.name, sub: esc(d.creditor), amount: fmt(0), amountClass: 'muted',
+      id: d.id, action: 'debt', lead: '✅', title: d.name, sub: esc(d.creditor), amount: fmt(0), amountClass: 'muted',
     })).join('')}</div>` : '');
 }
 
@@ -725,7 +776,8 @@ const catChips = (selected) => chips('cat', CATS.map((c) => ({ value: c.id, labe
 const personChips = (selected, label = '¿De quién?') => {
   const people = store.settings.people || [];
   if (!people.length) return '';
-  return field(label, chips('person', people.map((p) => ({ value: p, label: esc(p) })), selected));
+  const options = [...people.map((p) => ({ value: p, label: esc(p) })), { value: '', label: '🏠 De la casa' }];
+  return field(label, chips('person', options, selected || ''));
 };
 
 function fixedSuggestions() {
@@ -772,6 +824,7 @@ function formBody(kind, it) {
         + field('¿Cuánto falta pagar en total?', moneyInput('saldo', it.saldo, true))
         + field('¿Cuánto es la cuota por mes?', moneyInput('cuota', it.cuota), 'Si no tiene cuota fija, dejalo vacío.')
         + field('Día de vencimiento <span class="opt">(opcional)</span>', dayInput('day', it.day))
+        + personChips(it.person, '¿De quién es la deuda?')
         + '<div class="preview" data-preview></div>';
   }
 }
@@ -784,7 +837,7 @@ function readForm(kind, form) {
     case 'expense': return { amount: money('amount'), cat: g('cat') || 'otros', desc: g('desc'), date: g('date') || defaultExpenseDate(), person: g('person') };
     case 'income': return { name: g('name'), amount: money('amount'), person: g('person'), freq: g('freq') || 'mensual', day: day('day') };
     case 'fixed': return { name: g('name'), amount: money('amount'), cat: g('cat') || 'otros', day: day('day'), person: g('person'), variable: g('variable') !== 'no' };
-    case 'debt': return { name: g('name'), creditor: g('creditor'), saldo: money('saldo'), cuota: money('cuota'), day: day('day') };
+    case 'debt': return { name: g('name'), creditor: g('creditor'), saldo: money('saldo'), cuota: money('cuota'), day: day('day'), person: g('person') };
   }
 }
 
@@ -805,6 +858,8 @@ function debtPreview(form) {
 }
 
 function openSheet(html) {
+  // Que el aviso de "Deshacer" no quede tapando los botones de la hoja.
+  document.getElementById('toast').className = 'toast';
   sheetEl.innerHTML = `<div class="backdrop" data-action="backdrop"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   document.body.classList.add('sheet-open');
   requestAnimationFrame(() => sheetEl.querySelector('.backdrop')?.classList.add('in'));
@@ -864,10 +919,111 @@ function openMonthAmount(item, { pay = false } = {}) {
         ? '<button type="submit" class="btn btn-primary" value="save">Guardar</button>'
         : `<button type="submit" class="btn btn-primary" value="${pay ? 'pay' : 'save'}">${pay ? 'Guardar y marcar pagado' : 'Guardar'}</button>
            <button type="submit" class="btn btn-secondary" value="${pay ? 'save' : 'pay'}">${pay ? 'Solo guardar el monto' : 'Guardar y marcar pagado'}</button>`}
-      <button type="button" class="btn btn-secondary" data-action="edit-full" data-id="${item.id}">Editar ${esc(item.name)}</button>
+      <button type="button" class="btn btn-secondary" data-action="edit-full" data-id="${item.id}">Cambiar o borrar ${esc(item.name)}</button>
     </div>
   </form>`);
   if (!matchMedia('(pointer: coarse)').matches) sheetEl.querySelector('[data-money]').focus();
+}
+
+const newId = () => crypto.randomUUID?.() || String(Date.now() + Math.random());
+
+// Hoja de una deuda: anotar un pago (entero o una parte) y ver los anteriores.
+function openDebt(d) {
+  const m = state.month;
+  const saldo = d.saldo || 0;
+  const left = debtLeft(d, m);
+  const progress = d.inicial > 0 ? 1 - saldo / d.inicial : 0;
+  const pagos = [...(d.pagos || [])].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (b.at || 0) - (a.at || 0));
+  const quick = [
+    left > 0.5 ? { value: left, label: paidAmount(d, m) > 0 ? `Lo que falta de la cuota · ${fmt(left)}` : `La cuota · ${fmt(left)}` } : null,
+    saldo > 0.5 && Math.abs(saldo - left) > 0.5 ? { value: saldo, label: `Todo · ${fmt(saldo)}` } : null,
+  ].filter(Boolean);
+  openSheet(`<form class="sheet-form" data-form="pago" data-id="${d.id}" novalidate>
+    <div class="sheet-head">
+      <button type="button" class="link-btn" data-action="close">Cerrar</button>
+      <h2>${esc(d.name)}</h2>
+      <span></span>
+    </div>
+    <div class="sheet-body">
+      <div class="debt-head">
+        <div class="tile-label">${saldo > 0.5 ? 'Falta pagar' : 'Deuda terminada 🎉'}</div>
+        <div class="debt-total">${fmt(saldo)}</div>
+        ${d.inicial > 0 ? `<div class="row-progress">${meter(progress, 'good')}<span>Pagaron ${fmt(d.inicial - saldo)} de ${fmt(d.inicial)}</span></div>` : ''}
+      </div>
+      ${saldo > 0.5 ? `
+        ${field('¿Cuánto pagaste?', moneyInput('monto', 0, true), `Se descuenta del saldo y se anota en ${monthName(m)}. Puede ser una parte.`)}
+        ${quick.length ? `<div class="chips">${quick.map((q) => `<button type="button" class="chip-btn" data-action="pay-fill" data-value="${Math.round(q.value)}">${q.label}</button>`).join('')}</div>` : ''}
+        <div class="form-error" role="alert" hidden></div>
+        <button type="submit" class="btn btn-primary">Anotar pago</button>` : ''}
+      ${pagos.length ? `<div class="field"><span class="field-label">Pagos anotados</span>
+        <div class="list card pagos">${pagos.map((p) => `<div class="row static">
+          <div class="row-main"><div class="row-title">${fmt(p.monto)}</div><div class="row-sub">${p.fecha ? dayLabel(p.fecha) : monthLabel(p.mes)}${p.por ? ` · ${esc(p.por)}` : ''}</div></div>
+          <button type="button" class="pago-del" data-action="remove-pago" data-pago="${esc(p.id)}" aria-label="Borrar este pago">${icon('x', 16)}</button>
+        </div>`).join('')}</div>
+        <span class="field-hint">Si anotaste un pago por error, tocá la ✕: la plata vuelve al saldo.</span></div>` : ''}
+      <button type="button" class="btn btn-secondary" data-action="edit-full" data-id="${d.id}">Cambiar o borrar la deuda</button>
+    </div>
+  </form>`);
+}
+
+function savePago(form) {
+  const d = store.items.find((i) => i.id === form.dataset.id);
+  if (!d) return closeSheet();
+  const monto = parseMoney(form.elements.monto.value);
+  const box = form.querySelector('.form-error');
+  const err = !(monto > 0) ? 'Poné cuánto pagaste.'
+    : monto > (d.saldo || 0) + 0.5 ? `Es más de lo que falta pagar (${fmt(d.saldo)}).` : '';
+  if (err) {
+    box.hidden = false;
+    box.textContent = err;
+    return;
+  }
+  const pago = addPago(d, monto);
+  closeSheet();
+  const rest = (d.saldo || 0) - monto;
+  toast(rest > 0.5 ? `Pago anotado · faltan ${fmt(rest)}` : '¡Deuda terminada! 🎉', '', () => store.removePagos(fresh(d), [pago]));
+}
+
+function addPago(d, monto) {
+  const pago = {
+    id: newId(), monto: Math.round(monto), mes: state.month, fecha: defaultExpenseDate(), at: Date.now(),
+    por: (store.user?.displayName || '').split(' ')[0],
+  };
+  store.payDebt(d, pago).catch(fail);
+  return pago;
+}
+
+const fresh = (item) => store.items.find((i) => i.id === item.id) || item;
+
+// Hoja con todo lo de una persona en el mes.
+function openPerson(name) {
+  const c = calc(state.month);
+  const p = personCalc(c, name);
+  const title = name || 'De la casa';
+  const list = (head, items, amount, sub) => items.length ? sectionHead(head) + `<div class="list card">${items.map((i) => row({
+    id: i.id,
+    action: i.kind === 'debt' ? 'debt' : i.kind === 'fixed' && i.variable ? 'month-amount' : 'edit',
+    lead: i.kind === 'income' ? '💰' : i.kind === 'debt' ? '💳' : CAT[i.cat]?.emoji || '📦',
+    title: i.name || i.desc || CAT[i.cat]?.label || 'Gasto',
+    sub: sub(i),
+    amount: amount(i),
+    amountClass: i.kind === 'income' ? 'tone-good' : '',
+  })).join('')}</div>` : '';
+  const tiles = [{ label: 'Gastos', value: fmt(p.totOut) }];
+  if (p.totIn) {
+    tiles.unshift({ label: 'Ingresos', value: fmt(p.totIn), tone: 'good' });
+    tiles.push({ label: p.totIn - p.totOut >= 0 ? 'Le queda' : 'Le falta', value: fmt(Math.abs(p.totIn - p.totOut)), tone: p.totIn - p.totOut < 0 ? 'bad' : '' });
+  }
+  openSheet(`<div class="sheet-head"><span></span><h2>${esc(title)}</h2><button class="sheet-close" data-action="close" aria-label="Cerrar">${icon('x', 18)}</button></div>
+    <div class="sheet-body">
+      <p class="muted small">${monthPeriod(c.m)}${name && !p.totIn ? ' · no tiene ingresos' : ''}</p>
+      ${summaryTiles(tiles)}
+      ${p.count ? '' : `<p class="muted">Todavía no hay nada cargado ${name ? `a nombre de ${esc(name)}` : 'sin persona'} en ${monthName(c.m)}.</p>`}
+      ${list('Ingresos', p.incomes, (i) => fmt(i.amount), (i) => i.freq === 'unico' ? 'Solo este mes' : 'Todos los meses')}
+      ${list('Gastos fijos', p.fixed, (f) => missingAmount(f, c.m) ? `<span class="approx">≈ ${fmt(fixedAmount(f, c.m))}</span>` : fmt(fixedAmount(f, c.m)), (f) => join(CAT[f.cat]?.label, dueText(f, c.m)))}
+      ${list('Cuotas de deudas', p.debts, (d) => fmt(debtCuota(d, c.m)), (d) => `Debe ${fmt(d.saldo)} en total`)}
+      ${list('Gastos del mes', p.expenses, (e) => fmt(e.amount), (e) => join(e.desc ? CAT[e.cat]?.label : '', e.date ? dayLabel(e.date) : ''))}
+    </div>`);
 }
 
 function saveMonthAmount(form, submitter) {
@@ -909,7 +1065,7 @@ function saveItem(form) {
     op = store.update(item.id, data);
   } else {
     data.kind = kind;
-    if (kind !== 'expense') data.desde = state.month;
+    if (kind !== 'expense') data.desde = kind === 'debt' && state.month > thisMonth() ? thisMonth() : state.month;
     op = store.add(data);
   }
   op.catch(fail);
@@ -934,6 +1090,30 @@ const ACTIONS = {
     const item = store.items.find((i) => i.id === el.dataset.id);
     if (item) openForm(item.kind, item);
   },
+  debt(el) {
+    const item = store.items.find((i) => i.id === el.dataset.id);
+    if (item) openDebt(item);
+  },
+  person(el) { openPerson(el.dataset.person); },
+  'pay-fill'(el) {
+    const input = el.closest('form').elements.monto;
+    input.value = inputFmt.format(Number(el.dataset.value));
+    el.closest('form').querySelectorAll('.chip-btn.on').forEach((b) => b.classList.remove('on'));
+    el.classList.add('on');
+  },
+  'remove-pago'(el) {
+    if (!el.classList.contains('confirm')) {
+      el.classList.add('confirm');
+      toast('Tocá la ✕ de nuevo para borrar el pago');
+      return;
+    }
+    const d = store.items.find((i) => i.id === el.closest('form').dataset.id);
+    const pago = d?.pagos?.find((p) => p.id === el.dataset.pago);
+    if (!pago) return;
+    store.removePagos(d, [pago]).catch(fail);
+    closeSheet();
+    toast(`Pago borrado · ${fmt(pago.monto)} volvió al saldo`, '', () => store.payDebt(fresh(d), pago));
+  },
   'month-amount'(el) {
     const item = store.items.find((i) => i.id === el.dataset.id);
     if (item) openMonthAmount(item);
@@ -945,11 +1125,26 @@ const ACTIONS = {
   toggle(el) {
     const item = store.items.find((i) => i.id === el.dataset.id);
     if (!item) return;
-    const on = !isPaid(item, state.month);
+    const m = state.month;
+    const on = !isPaid(item, m);
+    if (item.kind === 'debt') {
+      if (on) {
+        const left = debtLeft(item, m);
+        if (!(left > 0.5)) return openDebt(item);
+        const pago = addPago(item, left);
+        return toast('Cuota pagada · se descontó del saldo', '', () => store.removePagos(fresh(item), [pago]));
+      }
+      const pagos = (item.pagos || []).filter((p) => p.mes === m);
+      if (pagos.length) {
+        store.removePagos(item, pagos).catch(fail);
+        toast('Pago desmarcado · volvió al saldo', '', () => pagos.forEach((p) => store.payDebt(fresh(item), p)));
+      }
+      return;
+    }
     // Si cambia cada mes y no tiene el monto real, primero lo pide.
-    if (on && item.kind === 'fixed' && missingAmount(item, state.month)) return openMonthAmount(item, { pay: true });
-    store.setPaid(item, state.month, on).catch(fail);
-    if (on) toast(item.kind === 'debt' ? 'Cuota pagada · se descontó del saldo' : 'Marcado como pagado');
+    if (on && item.kind === 'fixed' && missingAmount(item, m)) return openMonthAmount(item, { pay: true });
+    store.setPaid(item, m, on).catch(fail);
+    if (on) toast('Marcado como pagado', '', () => store.setPaid(item, m, false));
   },
   go(el) { location.hash = el.dataset.view; },
   'month-prev'() { state.month = addMonths(state.month, -1); render(); },
@@ -989,9 +1184,10 @@ const ACTIONS = {
       return;
     }
     const id = el.closest('form').dataset.id;
+    const item = store.items.find((i) => i.id === id);
     store.remove(id).catch(fail);
     closeSheet();
-    toast('Borrado');
+    toast(`Borraste ${item?.name || item?.desc || 'el gasto'}`, '', item && (() => store.restore(item)));
   },
   'sign-in'() { store.signIn().catch((e) => toast(e.message, 'bad')); },
   'sign-out'() { store.signOut(); },
@@ -1070,6 +1266,7 @@ document.addEventListener('submit', (e) => {
   e.preventDefault();
   if (form.dataset.form === 'item') saveItem(form);
   if (form.dataset.form === 'month-amount') saveMonthAmount(form, e.submitter);
+  if (form.dataset.form === 'pago') savePago(form);
   if (form.dataset.form === 'add-person') {
     const name = form.elements.person.value.trim();
     if (!name) return;
@@ -1105,12 +1302,23 @@ window.addEventListener('hashchange', () => {
   window.scrollTo(0, 0);
 });
 
-function toast(msg, tone = '') {
+// Aviso abajo. Con `undo` muestra "Deshacer" y dura más, por si fue sin querer.
+function toast(msg, tone = '', undo = null) {
   const t = document.getElementById('toast');
   t.textContent = msg;
-  t.className = `toast show ${tone}`;
+  if (undo) {
+    const b = document.createElement('button');
+    b.className = 'toast-undo';
+    b.textContent = 'Deshacer';
+    b.onclick = () => {
+      t.className = 'toast';
+      Promise.resolve().then(undo).catch(fail);
+    };
+    t.append(b);
+  }
+  t.className = `toast show ${tone} ${undo ? 'has-undo' : ''}`;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { t.className = 'toast'; }, 2400);
+  toast.timer = setTimeout(() => { t.className = 'toast'; }, undo ? 6000 : 2400);
 }
 
 // ---------- Arranque ----------
