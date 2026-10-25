@@ -4,7 +4,7 @@ App web para llevar los ingresos, gastos fijos, gastos del día a día y deudas 
 
 - Funciona en el celular (se puede agregar a la pantalla de inicio como una app) y en la compu.
 - Modo claro y oscuro automático.
-- HTML, CSS y JavaScript sin compilación: se publica tal cual en GitHub Pages.
+- HTML, CSS y JavaScript sin compilación. Se instala en la pantalla de inicio y funciona sin señal.
 
 ## Modo prueba y modo compartido
 
@@ -13,6 +13,14 @@ Mientras `config.js` tenga `firebaseConfig = null`, la app funciona en **modo pr
 Para que toda la familia vea y cargue los mismos datos desde su celular, se conecta a **Firebase** (gratis). Cada uno entra con su cuenta de Google y solo los emails autorizados pueden ver los datos.
 
 ## Estado actual
+
+**App:** <https://gestiondedinero-df3ee.firebaseapp.com> (Firebase Hosting). La dirección de GitHub Pages redirige ahí: el inicio de sesión con Google necesita que la app esté en el mismo dominio que `authDomain`, si no falla en la app instalada en iPhone.
+
+Para publicar cambios:
+
+```sh
+firebase deploy --only hosting
+```
 
 Conectada al proyecto de Firebase `gestiondedinero-df3ee` (Firestore en `southamerica-east1`). El dueño (`coronilfabri@gmail.com`, ver `config.js`) invita a la familia con el link de **Ajustes → Invitar a la familia**. Las reglas se publican con:
 
