@@ -442,6 +442,17 @@ h1, h2, p { margin: 0; }
 .person button { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: var(--label-2); }
 .person button:hover { background: var(--fill-2); color: var(--bad); }
 .inline-form { display: flex; gap: 8px; }
+.invite-link {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 0.5px solid var(--sep);
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--label-2);
+  word-break: break-all;
+  user-select: all;
+}
+.btn:disabled { opacity: 0.45; pointer-events: none; }
 .inline-form .input, .inline-form input { flex: 1; min-width: 0; }
 .inline-form input {
   height: 42px;

@@ -1,8 +1,11 @@
 rules_version = '2';
 
-// El dueño (coronilfabri@gmail.com) siempre puede entrar y es el único que
-// cambia la lista de "miembros" (desde Ajustes en la app). Los miembros ven y
-// cargan todos los datos de la casa. Nadie más puede leer ni escribir nada.
+// Acceso a los datos de la casa:
+// - El dueño (coronilfabri@gmail.com) siempre puede entrar.
+// - Cualquiera que abra el link de invitación y entre con Google queda
+//   registrado en hogar/principal/accesos/{su email}. Para registrarse tiene
+//   que presentar el código vigente del link (hogar/principal.codigo).
+// - Nadie más puede leer ni escribir nada.
 service cloud.firestore {
   match /databases/{database}/documents {
     function email() {
@@ -14,17 +17,35 @@ service cloud.firestore {
     function esDueno() {
       return conSesion() && email() == 'coronilfabri@gmail.com';
     }
+    function hogar() {
+      return /databases/$(database)/documents/hogar/principal;
+    }
+    function codigoVigente() {
+      return exists(hogar()) ? get(hogar()).data.get('codigo', '') : '';
+    }
     function esMiembro() {
-      let hogar = /databases/$(database)/documents/hogar/principal;
       return esDueno()
-        || (conSesion() && exists(hogar) && email() in get(hogar).data.get('miembros', []));
+        || (conSesion() && (
+          exists(/databases/$(database)/documents/hogar/principal/accesos/$(email()))
+          || (exists(hogar()) && email() in get(hogar()).data.get('miembros', []))
+        ));
     }
 
     match /hogar/principal {
       allow read: if esMiembro();
       allow create: if esDueno();
       allow update: if esDueno()
-        || (esMiembro() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['miembros']));
+        || (esMiembro() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['miembros', 'codigo']));
+    }
+
+    match /hogar/principal/accesos/{correo} {
+      allow read: if esMiembro();
+      allow create, update: if conSesion()
+        && correo == email()
+        && request.resource.data.email == email()
+        && codigoVigente() != ''
+        && request.resource.data.codigo == codigoVigente();
+      allow delete: if esDueno();
     }
 
     match /hogar/principal/items/{item} {

@@ -23,6 +23,6 @@ export const firebaseConfig = {
   appId: '1:700882390453:web:8dfbda8dad137184775dfc',
 };
 
-// Cuenta de Google del dueño: es la única que puede sumar o sacar personas
-// desde Ajustes → "Quiénes pueden entrar".
+// Cuenta de Google del dueño: es la única que ve el link de invitación y
+// puede quitarle el acceso a alguien (Ajustes → "Invitar a la familia").
 export const ownerEmail = 'coronilfabri@gmail.com';

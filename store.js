@@ -3,10 +3,28 @@ import { firebaseConfig, ownerEmail } from './config.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const LOCAL_KEY = 'finanzas-familia:v1';
+const INVITE_KEY = 'finanzas-familia:invitacion';
 const DEFAULT_SETTINGS = { people: ['Papá', 'Mamá', 'Fabricio'] };
 
 const listeners = new Set();
 let backend = null;
+
+// Un link de invitación trae "#invitacion=CÓDIGO": se guarda hasta que la
+// persona entra con Google y se limpia de la barra de direcciones.
+const inviteMatch = location.hash.match(/invitacion=([\w-]+)/);
+if (inviteMatch) {
+  try { localStorage.setItem(INVITE_KEY, inviteMatch[1]); } catch {}
+  history.replaceState(null, '', location.pathname + location.search);
+}
+function takeInvite() {
+  try {
+    const code = localStorage.getItem(INVITE_KEY);
+    localStorage.removeItem(INVITE_KEY);
+    return code;
+  } catch {
+    return null;
+  }
+}
 
 export const store = {
   mode: firebaseConfig ? 'cloud' : 'local',
@@ -14,6 +32,7 @@ export const store = {
   user: null,
   error: '',
   items: [],
+  accesos: [],
   settings: { ...DEFAULT_SETTINGS },
 
   subscribe(fn) { listeners.add(fn); },
@@ -32,6 +51,12 @@ export const store = {
   // En las deudas, pagar descuenta la cuota del saldo; desmarcar la devuelve.
   setPaid: (item, month, paid) => backend.setPaid(item, month, paid),
   saveSettings: (patch) => backend.saveSettings(patch),
+  removeAccess: (email) => backend.removeAccess(email),
+  newInvite: () => backend.newInvite(),
+  inviteLink() {
+    const code = this.settings.codigo;
+    return code ? `${location.origin}${location.pathname}#invitacion=${code}` : '';
+  },
   signIn: () => backend.signIn?.(),
   signOut: () => backend.signOut?.(),
   isOwner() {
@@ -117,18 +142,37 @@ async function cloudBackend() {
   const fail = (e) => set({ status: e.code === 'permission-denied' ? 'denied' : 'error', error: e.message });
   let unsubs = [];
 
-  A.onAuthStateChanged(auth, (user) => {
+  const accesosCol = F.collection(home, 'accesos');
+  const newCode = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(12))))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  A.onAuthStateChanged(auth, async (user) => {
     unsubs.forEach((u) => u());
     unsubs = [];
-    if (!user) return set({ status: 'signed-out', user: null, items: [] });
+    if (!user) return set({ status: 'signed-out', user: null, items: [], accesos: [] });
     set({ user, status: 'loading' });
+    const code = takeInvite();
+    if (code) {
+      const email = (user.email || '').toLowerCase();
+      try {
+        await F.setDoc(F.doc(accesosCol, email), { codigo: code, email, nombre: user.displayName || '', desde: Date.now() });
+      } catch (e) {
+        console.warn('Invitación no válida', e);
+      }
+    }
     unsubs.push(F.onSnapshot(itemsCol, (snap) => set({
       status: 'ready',
       items: snap.docs.map((d) => ({ ...d.data(), id: d.id })),
     }), fail));
-    unsubs.push(F.onSnapshot(home, (snap) => set({
-      settings: { ...DEFAULT_SETTINGS, ...snap.data() },
-    }), fail));
+    unsubs.push(F.onSnapshot(home, (snap) => {
+      set({ settings: { ...DEFAULT_SETTINGS, ...snap.data() } });
+      if (store.isOwner() && !snap.data()?.codigo) F.setDoc(home, { codigo: newCode() }, { merge: true });
+    }, fail));
+    if (store.isOwner()) {
+      unsubs.push(F.onSnapshot(accesosCol, (snap) => set({
+        accesos: snap.docs.map((d) => d.data()).sort((a, b) => (a.desde || 0) - (b.desde || 0)),
+      }), () => {}));
+    }
   });
 
   return {
@@ -153,6 +197,8 @@ async function cloudBackend() {
       return F.updateDoc(ref(item.id), path, paid ? true : F.deleteField());
     },
     saveSettings: (patch) => F.setDoc(home, patch, { merge: true }),
+    removeAccess: (email) => F.deleteDoc(F.doc(accesosCol, email)),
+    newInvite: () => F.setDoc(home, { codigo: newCode() }, { merge: true }),
     async signIn() {
       const provider = new A.GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });

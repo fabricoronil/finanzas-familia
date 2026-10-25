@@ -14,7 +14,7 @@ Para que toda la familia vea y cargue los mismos datos desde su celular, se cone
 
 ## Estado actual
 
-Conectada al proyecto de Firebase `gestiondedinero-df3ee` (Firestore en `southamerica-east1`). El dueño (`coronilfabri@gmail.com`, ver `config.js`) suma a la familia desde **Ajustes → Quiénes pueden entrar**. Las reglas se publican con:
+Conectada al proyecto de Firebase `gestiondedinero-df3ee` (Firestore en `southamerica-east1`). El dueño (`coronilfabri@gmail.com`, ver `config.js`) invita a la familia con el link de **Ajustes → Invitar a la familia**. Las reglas se publican con:
 
 ```sh
 firebase deploy --only firestore:rules
@@ -34,7 +34,9 @@ firebase deploy --only firestore:rules
 
 ## Sumar o sacar a alguien
 
-El dueño entra a la app, va a **Ajustes → Quiénes pueden entrar** y agrega o quita el email de Google de la persona.
+- **Sumar:** el dueño copia el link de **Ajustes → Invitar a la familia** y se lo manda a la persona. Al abrirlo y entrar con Google, queda con acceso.
+- **Sacar:** en **Ajustes → Quiénes pueden entrar**, tocar dos veces la ✕ al lado de la persona.
+- **Cambiar link:** invalida el link anterior (por si se compartió de más). Los que ya entraron siguen adentro.
 
 ## Probar en la compu
 
