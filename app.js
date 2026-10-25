@@ -56,6 +56,22 @@ const KINDS = {
   fixed: { name: 'gasto fijo', title: 'Nuevo gasto fijo', editTitle: 'Editar gasto fijo', emoji: '📅', hint: 'Se paga todos los meses: alquiler, luz…' },
   debt: { name: 'deuda', title: 'Nueva deuda', editTitle: 'Editar deuda', emoji: '💳', hint: 'Tarjeta, préstamo, plan en cuotas' },
 };
+// Atajos para cargar gastos fijos con un toque (completan nombre y categoría).
+const FIXED_SUGGESTIONS = [
+  { name: 'Luz', cat: 'servicios', emoji: '💡' },
+  { name: 'Gas', cat: 'servicios', emoji: '🔥' },
+  { name: 'Agua', cat: 'servicios', emoji: '🚰' },
+  { name: 'Internet', cat: 'servicios', emoji: '📶' },
+  { name: 'Celulares', cat: 'servicios', emoji: '📱' },
+  { name: 'Facultad (Cuenca del Plata)', cat: 'educacion', emoji: '🎓', person: 'Fabri' },
+  { name: 'Colegio del Carmen', cat: 'educacion', emoji: '🏫', person: 'Nico' },
+  { name: 'Alquiler', cat: 'vivienda', emoji: '🏠' },
+  { name: 'Expensas', cat: 'vivienda', emoji: '🏢' },
+  { name: 'Obra social', cat: 'salud', emoji: '🩺' },
+  { name: 'Seguro del auto', cat: 'transporte', emoji: '🚗' },
+  { name: 'Impuestos (ABL, patente)', cat: 'impuestos', emoji: '🧾' },
+];
+
 const VIEW_KIND = { ingresos: 'income', fijos: 'fixed', gastos: 'expense', deudas: 'debt' };
 
 // ---------- Utilidades ----------
@@ -384,7 +400,7 @@ function viewResumen(c) {
       <p>Carguen esto una sola vez y la app hace todas las cuentas sola.</p>
       <div class="steps">
         ${step(1, 'income', 'Lo que entra', 'Sueldos, jubilaciones, changas', has('income'))}
-        ${step(2, 'fixed', 'Los gastos fijos', 'Alquiler, luz, gas, internet, colegio…', has('fixed'))}
+        ${step(2, 'fixed', 'Los gastos fijos', 'Luz, internet, facultad, colegio…', has('fixed'))}
         ${step(3, 'debt', 'Las deudas', 'Tarjetas, préstamos, planes en cuotas', has('debt'))}
       </div>
       <p class="muted small">Después, cada vez que gasten algo, lo cargan con el botón <b>+</b>.</p>
@@ -500,7 +516,7 @@ function viewFijos(c) {
     check: { id: f.id, on: isPaid(f, c.m), label: f.name },
     lead: CAT[f.cat]?.emoji || '📦',
     title: f.name,
-    sub: join(CAT[f.cat]?.label, dueText(f, c.m)),
+    sub: join(CAT[f.cat]?.label, esc(f.person), dueText(f, c.m)),
     amount: fmt(f.amount),
   })).join('')}</div>
   <p class="hint">Tocá el círculo cuando lo paguen. Cada mes empieza sin marcar.</p>`;
@@ -645,11 +661,20 @@ function chips(name, options, selected) {
   return `<div class="chips" role="radiogroup">${options.map((o) => `<label class="chip"><input type="radio" name="${name}" value="${esc(o.value)}" ${o.value === selected ? 'checked' : ''}><span>${o.label}</span></label>`).join('')}</div>`;
 }
 const catChips = (selected) => chips('cat', CATS.map((c) => ({ value: c.id, label: `${c.emoji} ${c.label}` })), selected);
-const personChips = (selected) => {
+const personChips = (selected, label = '¿De quién?') => {
   const people = store.settings.people || [];
   if (!people.length) return '';
-  return field('¿De quién?', chips('person', people.map((p) => ({ value: p, label: esc(p) })), selected));
+  return field(label, chips('person', people.map((p) => ({ value: p, label: esc(p) })), selected));
 };
+
+function fixedSuggestions() {
+  const existing = new Set(store.items.filter((i) => i.kind === 'fixed').map((i) => i.name.toLowerCase()));
+  const list = FIXED_SUGGESTIONS.filter((s) => !existing.has(s.name.toLowerCase()));
+  if (!list.length) return '';
+  return `<div class="field"><span class="field-label">Elegí uno o escribilo abajo</span>
+    <div class="chips">${list.map((s) => `<button type="button" class="chip-btn" data-action="suggest" data-name="${esc(s.name)}" data-cat="${s.cat}" data-person="${esc(s.person || '')}">${s.emoji} ${esc(s.name)}</button>`).join('')}</div>
+  </div>`;
+}
 function segmented(name, options, selected) {
   return `<div class="seg">${options.map((o) => `<label><input type="radio" name="${name}" value="${o.value}" ${o.value === selected ? 'checked' : ''}><span>${o.label}</span></label>`).join('')}</div>`;
 }
@@ -673,10 +698,12 @@ function formBody(kind, it) {
         + field('¿Cada cuánto?', segmented('freq', [{ value: 'mensual', label: 'Todos los meses' }, { value: 'unico', label: 'Solo este mes' }], it.freq || 'mensual'))
         + field('Día de cobro <span class="opt">(opcional)</span>', dayInput('day', it.day));
     case 'fixed':
-      return field('¿Qué es?', textInput('name', it.name, 'Ej: Alquiler, Luz, Internet'))
+      return (it.name ? '' : fixedSuggestions())
+        + field('¿Qué es?', textInput('name', it.name, 'Ej: Alquiler, Luz, Internet'))
         + field('¿Cuánto se paga por mes?', moneyInput('amount', it.amount, true), 'Si cambia todos los meses (como la luz), poné un promedio y después lo ajustás.')
         + field('Categoría', catChips(it.cat || 'servicios'))
-        + field('Día de vencimiento <span class="opt">(opcional)</span>', dayInput('day', it.day), 'Te avisa cuando está por vencer.');
+        + field('Día de vencimiento <span class="opt">(opcional)</span>', dayInput('day', it.day), 'Te avisa cuando está por vencer.')
+        + personChips(it.person, '¿De quién es? <span class="opt">(opcional)</span>');
     case 'debt':
       return field('¿Qué deuda es?', textInput('name', it.name, 'Ej: Tarjeta Visa, Préstamo del banco'))
         + field('¿A quién se le debe? <span class="opt">(opcional)</span>', textInput('creditor', it.creditor, 'Ej: Banco Nación'))
@@ -694,7 +721,7 @@ function readForm(kind, form) {
   switch (kind) {
     case 'expense': return { amount: money('amount'), cat: g('cat') || 'otros', desc: g('desc'), date: g('date') || defaultExpenseDate(), person: g('person') };
     case 'income': return { name: g('name'), amount: money('amount'), person: g('person'), freq: g('freq') || 'mensual', day: day('day') };
-    case 'fixed': return { name: g('name'), amount: money('amount'), cat: g('cat') || 'otros', day: day('day') };
+    case 'fixed': return { name: g('name'), amount: money('amount'), cat: g('cat') || 'otros', day: day('day'), person: g('person') };
     case 'debt': return { name: g('name'), creditor: g('creditor'), saldo: money('saldo'), cuota: money('cuota'), day: day('day') };
   }
 }
@@ -811,6 +838,17 @@ const ACTIONS = {
   'month-next'() { state.month = addMonths(state.month, 1); render(); },
   'month-today'() { state.month = thisMonth(); render(); },
   close: closeSheet,
+  suggest(el) {
+    const form = el.closest('form');
+    form.elements.name.value = el.dataset.name;
+    const cat = form.querySelector(`input[name=cat][value="${el.dataset.cat}"]`);
+    if (cat) cat.checked = true;
+    const person = el.dataset.person && [...form.querySelectorAll('input[name=person]')].find((i) => i.value === el.dataset.person);
+    if (person) person.checked = true;
+    form.querySelectorAll('.chip-btn.on').forEach((b) => b.classList.remove('on'));
+    el.classList.add('on');
+    form.elements.amount.focus();
+  },
   async install() {
     if (!installPrompt) return;
     installPrompt.prompt();

@@ -4,7 +4,7 @@ import { firebaseConfig, ownerEmail } from './config.js';
 const SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const LOCAL_KEY = 'finanzas-familia:v1';
 const INVITE_KEY = 'finanzas-familia:invitacion';
-const DEFAULT_SETTINGS = { people: ['Papá', 'Mamá', 'Fabricio'] };
+const DEFAULT_SETTINGS = { people: ['Juan', 'Myriam', 'Fabri', 'Nico'] };
 
 const listeners = new Set();
 let backend = null;
